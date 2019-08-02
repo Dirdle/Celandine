@@ -8,7 +8,7 @@ using moleculeReader, moleculeDrawer, basis
 function testMoleculeReader()
     println("Testing molecule reading...")
     #How to make this consistently be the right path??
-    filepath = "celandine\\exampleMolecules.txt"
+    filepath = joinpath(@__DIR__, "res", "exampleMolecules.txt")
     println("Testing file read to array...")
     readArr = readFileToArray(filepath)
     println(readArr)

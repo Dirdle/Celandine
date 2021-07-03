@@ -178,15 +178,15 @@ function runExample()
     tei, tricache = getCachedTwoElectronIntegrals("eepoten", fileformat=".dat")
 
     Hcore = TIntegrals + nucVIntegrals
-    symm = overlapIntegrals^(-1//2)
-    tsymm = transpose(symm)
-    unsymm = inv(symm)
-    tunsymm = transpose(unsymm)
+    orth = overlapIntegrals^(-1//2)
+    torth = transpose(orth)
+    unorth = inv(orth)
+    tunorth = transpose(unorth)
 
-    Fprime0 = tsymm * Hcore * symm
-    F = tunsymm*Fprime0*unsymm
+    Fprime0 = torth * Hcore * orth
+    F = tunorth*Fprime0*unorth
 
-    C0 = symm*eigvecs(Symmetric(Fprime0))
+    C0 = orth*eigvecs(Symmetric(Fprime0))
     #scourFP!(C0, 1e-14)
 
     D0 = constructDensityMatrix(C0)
@@ -208,8 +208,8 @@ function runExample()
         push!(electronicEnergies, Enew)
 
         F = getNextFock(H, Dnew, tei, tricache)
-        Fprime = Symmetric(tsymm*F*symm)
-        C = symm*eigvecs(Fprime)
+        Fprime = Symmetric(torth*F*orth)
+        C = orth*eigvecs(Fprime)
         #scourFP!(C, 1e-14)
         Dnew = constructDensityMatrix(C)
 

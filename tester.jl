@@ -1,9 +1,12 @@
 #Want to include all the modules in the project...
 include("moleculeReader.jl")
 include("moleculeDrawer.jl")
-include("basis.jl")
 
-using moleculeReader, moleculeDrawer, basis
+
+using .moleculeReader
+using .moleculeDrawer
+
+include("basis.jl")
 
 function testMoleculeReader()
     println("Testing molecule reading...")
@@ -34,20 +37,29 @@ function testMoleculeDrawer()
     drawMolecule(exampleArray)
 end
 
-function testBasis()
-    println("Testing basis import...")
-    testbasisname = "sto3g"
-    testbasis = getBasis(testbasisname)
-    println("Created basis " * testbasis.name)
-    println("Checking basis contents...")
-    print(testbasis.basis[1])
-    print(testbasis.basis[11])
-end
 
 
-try
-    testBasis()
-finally
-    #This undoes the inclusions and uses, except when it doesn't
-    workspace()
+
+
+#Need to get the expected integrals from somewhere and do comparisonss
+function testOneElectronIntegrals()
+    println("Testing one-electron integrals")
+    testbf = OneElec.getNormalisedBasisFunction("sto3g", 1, [0,0,0], [0,0,0])
+    println("The overlap of a basis fucntion with itself should be ~1.0: ")
+    println(overlap(testbf, testbf))
 end
+
+testBasis()
+
+#
+# struct myStruct
+#     ab::Array{Int64, 1}
+#     ac::Int64
+# end
+#
+# function myFunc!(a::myStruct)
+#     a.ab = [1,2,3]
+# end
+#
+# s = myStruct([], 3)
+# myFunc!(s)

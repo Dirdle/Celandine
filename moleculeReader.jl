@@ -13,18 +13,49 @@
 
 module moleculeReader
 
+mutable struct AtomGeom
+    atomNum::Int64
+    center::Array{Float64, 1}
+end
+
+struct UniversalInformation
+    lengthunit::Real #Unit of length as fraction of nm
+end
+
 function readFileToArray(filepath)
     #Read the file in the given location
     #Return the contained atomic structure as an array
 
     #Open the file
-    f = open(filepath)
-    t = readstring(f)
-    #Remove any \r's. Awful char.
-    t = replace(t, '\r', "")
-    a = separateText(t)
-    #Convert the body-block to an array of numeric values
-    return convertTextBlockToArray(a[2])
+    open(filepath) do f
+        t = readstring(f)
+        #Remove any \r's. Awful char.
+        t = replace(t, '\r', "")
+        a = separateText(t)
+        #Convert the body-block to an array of numeric values
+        return convertTextBlockToArray(a[2])
+    end
+end
+
+function readFileToMoleculeGeom(filepath)
+    open(filepath) do f
+        moleGeom = Vector{AtomGeom}([])
+        t = strip(replace(read(f, String), '\r' => ""))
+        block = separateText(t)[2]
+        for l in block
+            a = AtomGeom(parseAtomicNum(l), parseCenter(l))
+            push!(moleGeom, a)
+        end
+        return moleGeom
+    end
+end
+
+function parseAtomicNum(s::SubString{String})
+    return Meta.parse(split(s)[1])
+end
+
+function parseCenter(s::SubString{String})
+    return map(Meta.parse, split(s)[2:end])
 end
 
 function readFileToUniversalInformation(filepath)
@@ -70,10 +101,8 @@ function separateText(text)
     return [head, body]
 end
 
-type universalInformation
-    lengthunit::Real #Unit of length as fraction of nm
-end
 
-export readFileToArray, readFileToUniversalInformation, universalInformation
+
+export readFileToArray, readFileToUniversalInformation, UniversalInformation, AtomGeom, MoleculeGeom, readFileToMoleculeGeom
 
 end

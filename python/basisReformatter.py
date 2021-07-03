@@ -1,8 +1,8 @@
 import os
 import re
 
-basepath = "PyQuante\\PyQuante\\Basis\\"
-outpath  = "..\\julia\\celandine\\res\\basis\\"
+basepath = "..\\..\\..\\..\\PyQuante\\PyQuante\\Basis\\"
+outpath  = "..\\res\\basis\\"
 
 def reformatBasis(filepath):
     with open(filepath) as f:
@@ -79,11 +79,11 @@ def convertBlock(block):
 
 def getLeadNumber(leadstring):
     loc = leadstring.index(':')
-    mtc = re.compile("[\d.]+")
+    mtc = re.compile("[\d.-]+")
     return ''.join(mtc.findall(leadstring[:loc]))
 
 def getNumbers(numPairString):
-    mtc = re.compile("[\d.]+")
+    mtc = re.compile("[\d.-]+")
     #This is a regex that matches a string of however-many digits and .s
     #The question of whether it's more likely to be tripped up by multiple .s
     #or by a non-decimal number if we used \d+.\d+ instead is interesting

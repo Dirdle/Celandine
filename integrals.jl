@@ -8,6 +8,8 @@ using PyCall
 #but in practice ignores it and uses conda instead
 
 using HypergeometricFunctions
+using QuadGK
+using OffsetArrays
 
 include("basis.jl")
 include("moleculeReader.jl")
@@ -15,11 +17,15 @@ using .moleculeReader
 
 SPECFN = pyimport("scipy.special")
 
-mutable struct TwoElecItg{T,N} <: AbstractArray{T,N}
-    #Purpose of this array type is to store a 4D array in 1/8th the space
+
+#=
+Two-Electron Integral struct to store a 4D array in 1/8th the space
     #by exploiting the 8-fold permutational symmetry of TEIs.
     #Behaviour must be exactly as if it were in fact the full 4D array.
     #i.e. should be indexable by [i,j,k,l]
+=#
+mutable struct TwoElecItg{T,N} <: AbstractArray{T,N}
+
     vals::Array{T,N}
     isTriangleIndexed::Bool
     triangleCache::Array{Int64}
@@ -68,21 +74,32 @@ function Base.show(io::IO, a::TwoElecItg)
     end
 end
 
+#=
+Coefficient Expander struct for generation of expansion coefficients with
+caching.
+=#
 mutable struct CoefficientExpander
     α::Float64
     β::Float64
     Q::Float64
-    cache::Array{Float64, 3}
-    cacheOffset::Array{Int64, 1}
+    cache::OffsetArray{Float64, 3}
 end
 
-function CoefficientExpander(a::Float64, b::Float64, q::Array{Float64, 1})
-    x = CoefficientExpander(a, b, q[1], zeros(Float64, (1,1,1)), [0,0])
-    y = CoefficientExpander(a, b, q[2], zeros(Float64, (1,1,1)), [0,0])
-    z = CoefficientExpander(a, b, q[3], zeros(Float64, (1,1,1)), [0,0])
+function CoefficientExpander(maxI::Int64, maxJ::Int64, maxT::Int64,
+    minI::Int64, minJ::Int64,
+    a::Float64, b::Float64, q::Array{Float64, 1})
+
+    lowestReachableJ = minJ - maxI
+    o = OffsetArray(zeros(Float64, (maxI-minI+1, maxJ-lowestReachableJ+1, maxT+maxI+maxJ+1)),
+     minI:maxI, lowestReachableJ:maxJ, 0:maxT+maxI+maxJ)
+
+    x = CoefficientExpander(a, b, q[1], copy(o))
+    y = CoefficientExpander(a, b, q[2], copy(o))
+    z = CoefficientExpander(a, b, q[3], copy(o))
 
     return (x,y,z)
 end
+
 
 #=
 Utility Functions
@@ -112,24 +129,25 @@ function precomputeTriangles(lim::Int64)
 end
 
 function boys(n::Number, Z::Float64)
-    #HypergeometricFunctions library form
-    #return mFn([n+0.5], [n+1.5], BigFloat(-Z)) / (2n+1)
-    #this routinely fails for large Z, which will come up in this
+    # # HypergeometricFunctions library form
+    # return pFq([n+0.5], [n+1.5], BigFloat(-Z)) / (2n+1)
+    # # This is incredibly slow, 300 times slower than scipy
 
-    #integral form
+    # # Integral form
     # BZ = BigFloat(-Z)
     # int, err = quadgk(x -> x^2n * exp(BZ*x^2), 0, 1, rtol=1e-9)
     # return int
-    #Also fails under same circumstances! Augh.
+    # # This is somewhat slow, about 16 times slower than scipy
 
-    #Explicit form
-    #return hyp_1F1(n+0.5, n+1.5, -Z)/(2n+1)
-    #Same problem. What the fuck is scipy doing?
+    # # Explicit form
+    # return hyp_1F1(n+0.5, n+1.5, -Z)/(2n+1)
+    # # The explicit function below does not work
 
-    # PyCall version
+    # # PyCall version
     return SPECFN.hyp1f1(n+0.5, n+1.5, -Z)/(2n+1)
 end
 
+# This is horribly broken for unclear reasons
 # function hyp_1F1(a::Float64, b::Float64, z::Float64, N=500::Int64, ϵ=1e-8)
 #     # for k in range(500):
 #     # term *= (a + k) * x / (b + k) / (k + 1)
@@ -155,7 +173,11 @@ function gaussianProductCentre(α::Float64, origA::Array{Float64,1}, β::Float64
     return origP
 end
 
-#Expansion Coefficients
+#=
+Expansion Coefficients
+=#
+
+#The "textbook" approach
 function expanCoeff(i::Int64, j::Int64, t::Int64,
                 α::Float64, β::Float64, Qsep::Float64)
                 #α, β: exponents on A, B
@@ -172,7 +194,7 @@ function expanCoeff(i::Int64, j::Int64, t::Int64,
             #Terminus case
             return exp(-q*Qsep^2)
         elseif j == 0
-            #Slide along j=0 instead of stepping along?
+            #Slide along j=0
             E0 = expanCoeff(i-1, j, t-1, α, β, Qsep)
             E1 = expanCoeff(i-1, j, t,   α, β, Qsep)
             E2 = expanCoeff(i-1, j, t+1, α, β, Qsep)
@@ -186,108 +208,46 @@ function expanCoeff(i::Int64, j::Int64, t::Int64,
     end
 end
 
+#A "faster" cached approach, requires code elsewhere to support it
 function getExpCoeff(E::CoefficientExpander, i::Int64, j::Int64, t::Int64)
-    if t < 0 || t > i+j
+    if !(0 <= t <= i+j)
         #oob!
+        # println("i, j, t oob: $i, $j, $t. Return 0")
         return 0.0
     else
-        expandCache!(E, i, j, t)
-
-        indI = i + E.cacheOffset[1] + 1
-        indJ = j + E.cacheOffset[2] + 1
-        indT = t + 1
-        if E.cache[indI, indJ, indT] != 0.0
-            return E.cache[indI, indJ, indT]
+        val = E.cache[i, j, t]
+        if val != 0.0
+            # println("i, j, t: $i, $j, $t value stored. Returning stored value $val")
+            return val
         else
             #evaluate the expansion coefficient
-            #Even if thise
             p = E.α + E.β
             q = E.α * E.β / p
             if t == i == j == 0
                 #Terminus case
                 term = exp(-q * E.Q^2)
-                E.cache[indI, indJ, indT] = term
+                E.cache[i, j, t] = term
+                # println("i, j, t == 0. Terminus case. Returning and caching $term")
                 return term
-            elseif j < i
-                #Slide along j=0 instead of stepping along?
+            elseif j == 0
                 E0 = getExpCoeff(E, i-1, j, t-1)
                 E1 = getExpCoeff(E, i-1, j, t)
                 E2 = getExpCoeff(E, i-1, j, t+1)
                 res = E0/(2p) - E1*q*E.Q/E.α + E2*(t + 1)
-                E.cache[indI, indJ, indT] = res
+                E.cache[i, j, t] = res
+                # println("i, j, t: $i, $j, $t returning and caching $res")
                 return res
             else
                 E0 = getExpCoeff(E, i, j-1, t-1)
                 E1 = getExpCoeff(E, i, j-1, t)
                 E2 = getExpCoeff(E, i, j-1, t+1)
                 res = E0/(2p) + E1*q*E.Q/E.β + E2*(t + 1)
-                E.cache[indI, indJ, indT] = res
+                E.cache[i, j, t] = res
+                # println("i, j, t: $i, $j, $t returning and caching $res")
                 return res
             end
         end
-
     end
-end
-
-function expandCache!(E::CoefficientExpander, i::Int64, j::Int64, t::Int64)
-    cacheMaxI, cacheMaxJ, cacheMaxT = size(E.cache)
-    #Note this is still 0-indexed. Only add 1 when addressing array
-    oldIndI = i + E.cacheOffset[1]
-    oldIndJ = j + E.cacheOffset[2]
-    #No offset for t, but for convenience, gets the same name
-    oldIndT = t
-
-    if oldIndI < 0
-        #println("i is out-of-bounds, and too negative")
-        newIOffset = abs(i)
-        newCacheMaxI = cacheMaxI + newIOffset - E.cacheOffset[1]
-    elseif oldIndI >= cacheMaxI
-        #println("i is out-of-bounds, and too positive")
-        newIOffset = E.cacheOffset[1]
-        newCacheMaxI = oldIndI + 1
-    else
-        #println("i is in-bounds")
-        newIOffset = E.cacheOffset[1]
-        newCacheMaxI = cacheMaxI
-    end
-    if oldIndJ < 0
-        #println("j is out-of-bounds, and too negative")
-        newJOffset = abs(j)
-        newCacheMaxJ = cacheMaxJ + newJOffset - E.cacheOffset[2]
-    elseif oldIndJ >= cacheMaxJ
-        #println("j is out-of-bounds, and too positive")
-        newJOffset = E.cacheOffset[2]
-        newCacheMaxJ = oldIndJ + 1
-    else
-        #println("j is in-bounds")
-        newJOffset = E.cacheOffset[2]
-        newCacheMaxJ = cacheMaxJ
-    end
-    if oldIndT >= cacheMaxT
-        #println("t is out of bounds (too positive)")
-        newCacheMaxT = oldIndT + 1
-    else
-        #println("t is in bounds")
-        newCacheMaxT = cacheMaxT
-    end
-
-    newcache = zeros(Float64, (newCacheMaxI, newCacheMaxJ, newCacheMaxT))
-    cacheMinI = newIOffset - E.cacheOffset[1]
-    cacheMinJ = newJOffset - E.cacheOffset[2]
-    cacheMinT = newCacheMaxT - cacheMaxT
-    # println("$cacheMinI, $cacheMinJ, $newCacheMaxI, $newCacheMaxJ")
-    # display(newcache[cacheMinI+1:cacheMaxI,cacheMinJ+1:cacheMaxJ,1:cacheMaxT])
-    newcache[cacheMinI + 1:cacheMaxI + newIOffset,
-            cacheMinJ + 1:cacheMaxJ + newJOffset,
-            cacheMinT + 1:newCacheMaxT] = E.cache
-    E.cache = newcache
-    E.cacheOffset = [newIOffset, newJOffset]
-    return E
-end
-
-function cacheUpdateTest(i, j, t)
-    testE = CoefficientExpander(1, 1, 2, zeros(Float64, (1,1,1)), [0,0])
-    expandE = expandCache!(testE, i, j, t)
 end
 
 #Coulomb auxilliary Hermite Integral
@@ -325,26 +285,19 @@ end
 #=
 Overlap Integrals
 =#
-# # Uses fast coefficient expansion of dubious confidence
-# function primOverlap(la::Int64, ma::Int64, na::Int64,
-#                      lb::Int64, mb::Int64, nb::Int64,
-#                      oriA::Array{Float64, 1}, oriB::Array{Float64, 1},
-#                      expA::Float64, expB::Float64)
-#     Ex, Ey, Ez = CoefficientExpander(expA, expB, oriA .- oriB)
-#     Sx = getExpCoeff(Ex, la, lb, 0)
-#     Sy = getExpCoeff(Ey, ma, mb, 0)
-#     Sz = getExpCoeff(Ez, na, nb, 0)
-#     return Sx * Sy * Sz * (π/(expA + expB))^(3//2)
-# end
-
 function primOverlap(la::Int64, ma::Int64, na::Int64,
                      lb::Int64, mb::Int64, nb::Int64,
                      oriA::Array{Float64, 1}, oriB::Array{Float64, 1},
                      expA::Float64, expB::Float64)
-    Q = oriA .- oriB
-    Sx = expanCoeff(la, lb, 0, expA, expB, Q[1])
-    Sy = expanCoeff(ma, mb, 0, expA, expB, Q[2])
-    Sz = expanCoeff(na, nb, 0, expA, expB, Q[3])
+
+    maxI = max(la, ma, na)
+    minI = min(la, ma, na)
+    maxJ = max(lb, mb, nb)
+    minJ = min(lb, mb, nb)
+    Ex, Ey, Ez = CoefficientExpander(maxI, maxJ, 0, minI, minJ, expA, expB, oriA .- oriB)
+    Sx = getExpCoeff(Ex, la, lb, 0)
+    Sy = getExpCoeff(Ey, ma, mb, 0)
+    Sz = getExpCoeff(Ez, na, nb, 0)
     return Sx * Sy * Sz * (π/(expA + expB))^(3//2)
 end
 
@@ -357,9 +310,13 @@ function overlap(A::BasisFunction, B::BasisFunction)
     S = .0
     for i in eachindex(A.coeff)
         for j in eachindex(B.coeff)
+            p =
+
             S += A.norma[i] * A.coeff[i] * B.norma[j] * B.coeff[j] *
-            primOverlap(A.angMom..., B.angMom..., A.origin, B.origin,
-                            A.expon[i], B.expon[j])
+                    primOverlap(
+                    A.angMom..., B.angMom..., A.origin, B.origin,
+                    A.expon[i], B.expon[j]
+                            )
         end
     end
     # println("Found overlap: $S \n")
@@ -388,7 +345,6 @@ function primKinetic(la::Int64, ma::Int64, na::Int64,
     return q1 + q2 + q3
 end
 
-
 function kinetic(A::BasisFunction, B::BasisFunction)
     K = .0
     for i in eachindex(A.coeff)
@@ -414,13 +370,27 @@ function primNuclearAttraction(
     Op = gaussianProductCentre(expa, Oa, expb, Ob)
     RPN = norm(Op - On)
 
+    maxI = max(la, ma, na)
+    minI = min(la, ma, na)
+    maxJ = max(lb, mb, nb)
+    minJ = min(lb, mb, nb)
+
+    T = la + lb + 1
+    U = ma + mb + 1
+    V = na + nb + 1
+
+    maxT = max(T, U, V)
+
+    Ex, Ey, Ez = CoefficientExpander(maxI, maxJ, maxT, minI, minJ,
+                    expa, expb, Oa .- Ob)
+
     tot = .0
-    for t = 0:(la+lb+1)
-        for u = 0:(ma+mb+1)
-            for v = 0:(na+nb+1)
-                tot +=  expanCoeff(la, lb, t, expa, expb, Oa[1] - Ob[1]) *
-                        expanCoeff(ma, mb, u, expa, expb, Oa[2] - Ob[2]) *
-                        expanCoeff(na, nb, v, expa, expb, Oa[3] - Ob[3]) *
+    for t = 0:T
+        for u = 0:U
+            for v = 0:V
+                tot +=  getExpCoeff(Ex, la, lb, t) *
+                        getExpCoeff(Ey, ma, mb, u) *
+                        getExpCoeff(Ez, na, nb, v) *
                         R(t, u, v, 0, expp, (Op .- On)..., RPN)
             end
         end
@@ -466,22 +436,47 @@ function primElecRepul(lmnA::Array{Int64,1},
     sepCD = oriC .- oriD
     RPQ = norm(oriP - oriQ)
 
+    T = la + lb + 1
+    U = ma + mb + 1
+    V = na + nb + 1
+
+    TAU = lc + ld + 1
+    NU  = mc + md + 1
+    PHI = nc + nd + 1
+
+    maxI = max(la, ma, na)
+    minI = min(la, ma, na)
+    maxJ = max(lb, mb, nb)
+    minJ = min(lb, mb, nb)
+    maxT = max(T, U, V)
+    Ex1, Ey1, Ez1 = CoefficientExpander(maxI, maxJ, maxT, minI, minJ,
+                    expA, expB, sepAB)
+
+
+    maxI = max(lc, mc, nc)
+    minI = min(lc, mc, nc)
+    maxJ = max(ld, md, nd)
+    minJ = min(ld, md, nd)
+    maxT = max(TAU, NU, PHI)
+
+    Ex2, Ey2, Ez2 = CoefficientExpander(maxI, maxJ, maxT, minI, minJ,
+                    expC, expD, sepCD)
 
     tot = .0
-    for t = 0:(la+lb+1)
-        for u = 0:(ma+mb+1)
-            for v = 0:(na+nb+1)
-                for τ = 0:(lc+ld+1)
-                    for ν = 0:(mc+md+1)
-                        for ϕ = 0:(nc+nd+1)
+    for t = 0:T
+        for u = 0:U
+            for v = 0:V
+                for τ = 0:TAU
+                    for ν = 0:NU
+                        for ϕ = 0:PHI
                             #Yes, really.
                             tot +=
-                                expanCoeff(la, lb, t, expA, expB, sepAB[1]) *
-                                expanCoeff(ma, mb, u, expA, expB, sepAB[2]) *
-                                expanCoeff(na, nb, v, expA, expB, sepAB[3]) *
-                                expanCoeff(lc, ld, τ, expC, expD, sepCD[1]) *
-                                expanCoeff(mc, md, ν, expC, expD, sepCD[2]) *
-                                expanCoeff(nc, nd, ϕ, expC, expD, sepCD[3]) *
+                                getExpCoeff(Ex1, la, lb, t) *
+                                getExpCoeff(Ey1, ma, mb, u) *
+                                getExpCoeff(Ez1, na, nb, v) *
+                                getExpCoeff(Ex2, lc, ld, τ) *
+                                getExpCoeff(Ey2, mc, md, ν) *
+                                getExpCoeff(Ez2, nc, nd, ϕ) *
                                 (-1)^(τ+ν+ϕ) *
                                 R(t+τ, u+ν, v+ϕ, 0, α, (oriP .- oriQ)..., RPQ)
                         end
@@ -628,8 +623,8 @@ function selftest()
 
     filepath = joinpath(@__DIR__, "res", "exampleWater.txt")
     geom = readFileToMoleculeGeom(filepath)
-
-    over, kine, nucl = generateOneElectronIntegrals(geom, "sto3g")
+    println("Calculating one-electron integrals...")
+    @time over, kine, nucl = generateOneElectronIntegrals(geom, "sto3g")
 
     targetOver =
      [1.     0.237  0.     0.     0.     0.038  0.038
@@ -658,10 +653,10 @@ function selftest()
        -1.23     -2.98   -1.82  -1.47     0.0      -5.3   -1.07
        -1.23     -2.98    1.82  -1.47     0.0      -1.07  -5.3]
 
-    # ERI = generateTwoElectronIntegrals(geom, "sto3g")
-    # targetERI = getTestTargetERI()
 
+    failed = false
     if any(map(abs, (over - targetOver)) .> 0.1)
+        failed = true
         println("Overlap integrals failed, errors:")
         display(over - targetOver)
         println("Values:")
@@ -669,6 +664,7 @@ function selftest()
     end
 
     if any(map(abs, (kine - targetKine)) .> 0.1)
+        failed = true
         println("Kinetic energy integrals failed, errors:")
         display(kine - targetKine)
         println("Values:")
@@ -676,12 +672,21 @@ function selftest()
     end
 
     if any(map(abs, (nucl - targetNucl)) .> 0.1)
+        failed = true
         println("Nuclear potential integrals failed, errors:")
         display(nucl - targetNucl)
     end
 
+    println("Calculating two-electron integrals... (this may take a long time)")
+    @time ERI = generateTwoElectronIntegrals(geom, "sto3g")
+    targetERI = getTestTargetERI()
     if any(map(abs, (ERI.vals - targetERI.vals)) .> 0.1)
-        println("Two-electron integrals failed, errors not shown.")
+        failed = true
+        println("Two-electron integrals failed.")
+    end
+
+    if !failed
+        println("All tests passed.")
     end
 
 end

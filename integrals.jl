@@ -3,19 +3,22 @@ module Integrals
 
 using Combinatorics
 using LinearAlgebra
-using PyCall
+# using PyCall
+# SPECFN = pyimport("scipy.special")
 #PyCall is supposed to be able to use the regular python install
 #but in practice ignores it and uses conda instead
+# using HypergeometricFunctions
+# using QuadGK
+using SpecialFunctions
 
-using HypergeometricFunctions
-using QuadGK
+
 using OffsetArrays
 
 include("basis.jl")
 include("moleculeReader.jl")
 using .moleculeReader
 
-SPECFN = pyimport("scipy.special")
+
 
 
 #=
@@ -144,29 +147,27 @@ function boys(n::Number, Z::Float64)
     # # The explicit function below does not work
 
     # # PyCall version
-    return SPECFN.hyp1f1(n+0.5, n+1.5, -Z)/(2n+1)
+    # return SPECFN.hyp1f1(n+0.5, n+1.5, -Z)/(2n+1)
+
+    # reduced gamma function form
+    return gamma(0.5 + n) * gamma_inc(0.5 + n, Z, 0)[1] / (2Z^(0.5 + n))
 end
 
 # This is horribly broken for unclear reasons
-# function hyp_1F1(a::Float64, b::Float64, z::Float64, N=500::Int64, ϵ=1e-8)
-#     # for k in range(500):
-#     # term *= (a + k) * x / (b + k) / (k + 1)
-#     # result += term
-#     # if fabs(term) <= EPS * fabs(result):
-#     #     break
-#     term = result = 1
-#     for k = 0:N
-#         term *= (a+k)*z/(b+k)/k+1
-#         result += term
-#         if isnan(term) || isnan(result)
-#             println("$a, $b, $z, $term, $result")
-#         end
-#         if abs(term) <= ϵ * abs(result)
-#             return result
-#         end
-#     end
-#     error("No result found for hyp1f1 $a, $b, $z !")
-# end
+function hyp_1F1(a::BigFloat, b::BigFloat, z::BigFloat, N=500::Int64, ϵ=1e-8)
+    term = result = 1
+    for k = 0:N
+        term *= (a+k)*z/(b+k)/k+1
+        result += term
+        if isnan(term) || isnan(result)
+            println("$a, $b, $z, $term, $result")
+        end
+        if abs(term) <= ϵ * abs(result)
+            return result
+        end
+    end
+    error("No result found for hyp1f1 $a, $b, $z !")
+end
 
 function gaussianProductCentre(α::Float64, origA::Array{Float64,1}, β::Float64, origB::Array{Float64,1})
     origP = (α .* origA .+ β .* origB) ./ (α + β)

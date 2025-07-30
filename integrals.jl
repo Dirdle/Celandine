@@ -1,24 +1,16 @@
 #Create, save, and load arrays of one- and two-electron integrals
 module Integrals
+export overlap
+
+include("basis.jl")
+include("molecularGeom.jl")
 
 using Combinatorics
 using LinearAlgebra
-# using PyCall
-# SPECFN = pyimport("scipy.special")
-#PyCall is supposed to be able to use the regular python install
-#but in practice ignores it and uses conda instead
-# using HypergeometricFunctions
-# using QuadGK
-using SpecialFunctions
-
-
+using SpecialFunctions: gamma, gamma_inc
 using OffsetArrays
-
-include("basis.jl")
-include("moleculeReader.jl")
-using .moleculeReader
-
-
+using .MoleculeGeom
+using .Basis
 
 
 #=
@@ -150,24 +142,24 @@ function boys(n::Number, Z::Float64)
     # return SPECFN.hyp1f1(n+0.5, n+1.5, -Z)/(2n+1)
 
     # reduced gamma function form
-    return gamma(0.5 + n) * gamma_inc(0.5 + n, Z, 0)[1] / (2Z^(0.5 + n))
+    return gamma(0.5 + n) * gamma_inc(0.5 + n, Z, 0)[1] / (2 * Z^(0.5 + n))
 end
 
-# This is horribly broken for unclear reasons
-function hyp_1F1(a::BigFloat, b::BigFloat, z::BigFloat, N=500::Int64, ϵ=1e-8)
-    term = result = 1
-    for k = 0:N
-        term *= (a+k)*z/(b+k)/k+1
-        result += term
-        if isnan(term) || isnan(result)
-            println("$a, $b, $z, $term, $result")
-        end
-        if abs(term) <= ϵ * abs(result)
-            return result
-        end
-    end
-    error("No result found for hyp1f1 $a, $b, $z !")
-end
+# # This is horribly broken for unclear reasons
+# function hyp_1F1(a::BigFloat, b::BigFloat, z::BigFloat, N=500::Int64, ϵ=1e-8)
+#     term = result = 1
+#     for k = 0:N
+#         term *= (a+k)*z/(b+k)/k+1
+#         result += term
+#         if isnan(term) || isnan(result)
+#             println("$a, $b, $z, $term, $result")
+#         end
+#         if abs(term) <= ϵ * abs(result)
+#             return result
+#         end
+#     end
+#     error("No result found for hyp1f1 $a, $b, $z !")
+# end
 
 function gaussianProductCentre(α::Float64, origA::Array{Float64,1}, β::Float64, origB::Array{Float64,1})
     origP = (α .* origA .+ β .* origB) ./ (α + β)
@@ -551,7 +543,12 @@ function getAllShells(atom::Int64)
     return zip(allShell, pqns)
 end
 
-function getBasisFunction(geom::Array{AtomGeom, 1}, basis::String)
+"""
+    generateInitialBasis(geom::Array{AtomGeom, 1}, basis::String)
+
+Given a list of atomic positions and the name of the 
+"""
+function generateInitialBasis(geom::Array{AtomGeom, 1}, basis::String)
     bsfn = Vector{BasisFunction}([])
     for atom in geom
         an = atom.atomNum
@@ -571,7 +568,7 @@ function generateOneElectronIntegrals(geom::Array{AtomGeom, 1}, basis::String)
     #Need to create a set of BasisFunctions, centered on geom.centers,
     #using values from basisset for those geom.atoms, with shells (?)
     #Then we just slam them pairways to get out oeis
-    bsfn = getBasisFunction(geom, basis)
+    bsfn = generateInitialBasis(geom, basis)
     n = length(bsfn)
     overlapIntegrals = ones(Float64, (n,n))
     kineticIntegrals = zeros(Float64, (n,n))
@@ -599,7 +596,7 @@ function generateOneElectronIntegrals(geom::Array{AtomGeom, 1}, basis::String)
 end
 
 function generateTwoElectronIntegrals(geom::Array{AtomGeom, 1}, basis::String)
-    bsfn = getBasisFunction(geom, basis)
+    bsfn = generateInitialBasis(geom, basis)
     n = length(bsfn)
     tei = TwoElecItg(n)
     for i=1:n
@@ -620,7 +617,7 @@ function generateTwoElectronIntegrals(geom::Array{AtomGeom, 1}, basis::String)
 end
 
 
-function selftest()
+function tests()
 
     filepath = joinpath(@__DIR__, "res", "exampleWater.txt")
     geom = readFileToMoleculeGeom(filepath)

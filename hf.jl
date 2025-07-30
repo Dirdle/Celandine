@@ -1,6 +1,6 @@
 #Hartree-Fock code
 
-module hf
+module rhf
 
 using LinearAlgebra
 
@@ -10,21 +10,22 @@ function getCachedNuclearRepulsion(;
     folder::String = "cache",
     filename::String = "nucrepl",
     fileformat::String = ".txt")
+
     path = joinpath(basepath, folder, filename*fileformat)
     open(path) do f
         return Meta.parse(readline(f))
     end
 end
 
-function scourFP!(a, threshold=1.0e-15)
-    #Remove FP-error values
-    #Always work in units ~ 1!
-    for (i, val) in enumerate(a)
-        if abs(val) < threshold
-            a[i] = 0.0
-        end
-    end
-end
+# function scourFP!(a, threshold=1.0e-15)
+#     #Remove FP-error values
+#     #Always work in units ~ 1!
+#     for (i, val) in enumerate(a)
+#         if abs(val) < threshold
+#             a[i] = 0.0
+#         end
+#     end
+# end
 
 function getOccupiedOrbitals()
     #TODO improve this
@@ -74,7 +75,6 @@ end
 
 function runExample()
     nuclearRepulsion = getCachedNuclearRepulsion(fileformat=".dat")
-
     overlapIntegrals = getCachedOneElectronIntegrals("overlap", fileformat=".dat")
     TIntegrals = getCachedOneElectronIntegrals("kinetic", fileformat=".dat")
     nucVIntegrals = getCachedOneElectronIntegrals("nucpoten", fileformat=".dat")
@@ -87,9 +87,9 @@ function runExample()
     tunorth = transpose(unorth)
 
     Fprime0 = torth * Hcore * orth
-    F = tunorth*Fprime0*unorth
+    F = tunorth * Fprime0 * unorth
 
-    C0 = orth*eigvecs(Symmetric(Fprime0))
+    C0 = orth * eigvecs(Symmetric(Fprime0))
     #scourFP!(C0, 1e-14)
 
     D0 = constructDensityMatrix(C0)

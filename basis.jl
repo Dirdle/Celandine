@@ -1,5 +1,8 @@
 #Creates and manages basis sets
 
+module Basis
+export BasisFunction, getNormalisedBasisFunction
+
 using Printf
 using Combinatorics
 #define an extended double factorial that returns 1 for negative input
@@ -136,9 +139,12 @@ function testBasis()
     println(testbasis[11])
 
     println("Testing basis function generation...")
-    testbf = getNormalisedBasisFunction(testbasisname, 1, [0,0,0], [0,0,0])
+    testbf = getNormalisedBasisFunction(testbasisname, 1, 0, [0,0,0], [0.,0.,0.])
     println("Basis function: Origin - $(testbf.origin),
     Angular Momentum - $(testbf.angMom), Exponents - $(testbf.expon),
     Coefficients - $(testbf.coeff)")
 
+end
+
+#end of module
 end

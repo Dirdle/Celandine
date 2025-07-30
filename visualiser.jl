@@ -1,8 +1,10 @@
 # Makes pictures given an array of atom positions
 
-module moleculeDrawer
+module MoleculeDrawer
+export drawMolecule, getElementSymbol
 
 using PlotlyJS
+#TODO replace with Plots, unless re-doing the entire visuals overtakes
 
 #Defines the location of the periodic table informtion file
 eledata = "celandine\\res\\pt-data2.csv"
@@ -44,6 +46,23 @@ function getElementSymbol(atomicNumber::Float64)
     return getElementSymbol(atNumInt)
 end
 
-export drawMolecule, getElementSymbol
+function testvisualiser()
+    println("Testing molecule drawings...")
+    #Create a test array of atom positions
+    #Just an example. Maybe later get the numbers for something like DCM?
+    exampleArray = [1.0 0.0 0.0 0.0
+                    6.0 0.0 0.0 0.7414
+                    6.0 0.0 0.7414 0.7414
+                    8.0 0.7414 0.7414 0.7414
+                    15.0 0.7414 0.7414 0.0]
+    println("Testing element symbol retrieval...")
+    elementSymbols = ""
+    for atomicNum in exampleArray[:, 1]
+        elementSymbols *= getElementSymbol(atomicNum) * ", "
+    end
+    println(elementSymbols)
+    println("Testing plot construction...")
+    drawMolecule(exampleArray)
+end
 
 end

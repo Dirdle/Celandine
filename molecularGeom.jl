@@ -1,27 +1,52 @@
-#Information that applies to whole file:
-#-measurement unit (angstrom etc)
-#-using MP2 etc
-#-using PBC etc
-#it's complicated
+#=
+Structs and functions for defining the geometry of molecules. 
 
-#Molecules defined in files by format:
-#%atomic_number%, %x%, %y%, %z%
+Uses Cartesian coords.
 
-#molecules defined in program by array:
-#[number, Vector]
-#Distances in the program are always in nm (?)
 
-module moleculeReader
+Information that applies to whole file:
+-measurement unit (angstrom etc)
+-using MP2 etc
+-using PBC etc
+
+
+Molecules defined in files by format:
+%atomic_number%, %x%, %y%, %z%
+
+molecules defined in program by array:
+[number, Vector]
+Distances in the program are always in nm (?)
+=#
+
+
+module MoleculeGeom
+
+export AtomGeom
 
 mutable struct AtomGeom
     atomNum::Int64
     center::Array{Float64, 1}
 end
 
-struct UniversalInformation
-    lengthunit::Real #Unit of length as fraction of nm
+
+
+
+
 end
 
+
+
+module MoleculeReader
+
+export readFileToArray, readFileToMoleculeGeom
+
+
+
+"""
+    readFileToArray(filepath)
+
+TBW
+"""
 function readFileToArray(filepath)
     #Read the file in the given location
     #Return the contained atomic structure as an array
@@ -29,12 +54,26 @@ function readFileToArray(filepath)
     #Open the file
     open(filepath) do f
         t = readstring(f)
-        #Remove any \r's. Awful char.
+        #Remove any carriage returns
         t = replace(t, '\r', "")
         a = separateText(t)
         #Convert the body-block to an array of numeric values
         return convertTextBlockToArray(a[2])
     end
+end
+
+function separateText(text)
+    #Returns the text separated into two arrays of strings
+    blocks = split(text, "\n\n")
+    if length(blocks) == 1
+        #No header. Or, no body, but in that case: bigger problems
+        head = Array(String, 0)
+        body = split(blocks[1], '\n')
+    else
+        head = split(blocks[1], '\n')
+        body = split(blocks[2], '\n')
+    end
+    return [head, body]
 end
 
 function readFileToMoleculeGeom(filepath)
@@ -56,11 +95,6 @@ end
 
 function parseCenter(s::SubString{String})
     return map(Meta.parse, split(s)[2:end])
-end
-
-function readFileToUniversalInformation(filepath)
-    #Read the file in the given location
-    #Return an object containing the information set in the header
 end
 
 function convertTextBlockToArray(text::Array)
@@ -87,22 +121,15 @@ function lineConvert(line)
     return c
 end
 
-function separateText(text)
-    #Returns the text separated into two arrays of strings
-    blocks = split(text, "\n\n")
-    if length(blocks) == 1
-        #No header. Or, no body, but in that case: bigger problems
-        head = Array(String, 0)
-        body = split(blocks[1], '\n')
-    else
-        head = split(blocks[1], '\n')
-        body = split(blocks[2], '\n')
-    end
-    return [head, body]
+
+function testmolecularGeom()
+    println("Testing molecule reading...")
+    filepath = joinpath(@__DIR__, "res", "exampleMolecules.txt")
+    println("Testing file read to array...")
+    readArr = readFileToArray(filepath)
+    println(readArr)
+    println("Test successful.")
 end
 
-
-
-export readFileToArray, readFileToUniversalInformation, UniversalInformation, AtomGeom, MoleculeGeom, readFileToMoleculeGeom
 
 end

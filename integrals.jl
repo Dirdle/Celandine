@@ -1,6 +1,6 @@
 #Create, save, and load arrays of one- and two-electron integrals
 module Integrals
-export overlap
+export generateOneElectronIntegrals, generateTwoElectronIntegrals
 
 include("basis.jl")
 include("molecularGeom.jl")
@@ -27,7 +27,7 @@ mutable struct TwoElecItg{T,N} <: AbstractArray{T,N}
     dims::Int64
 end
 
-function TwoElecItg(n::Int64)
+function TwoElecItg(n::Int)
     #Creates a blank TEI array with dimension n
     c = precomputeTriangles(triangle(n+1))
     return TwoElecItg(zeros(Float64, c[end]), true, c, n)
@@ -70,8 +70,7 @@ function Base.show(io::IO, a::TwoElecItg)
 end
 
 #=
-Coefficient Expander struct for generation of expansion coefficients with
-caching.
+Coefficient Expander struct for generation of expansion coefficients with caching.
 =#
 mutable struct CoefficientExpander
     α::Float64
@@ -201,8 +200,8 @@ function expanCoeff(i::Int64, j::Int64, t::Int64,
     end
 end
 
-#A "faster" cached approach, requires code elsewhere to support it
-function getExpCoeff(E::CoefficientExpander, i::Int64, j::Int64, t::Int64)
+#A "faster" cached approach, requires the code elsewhere to pass in a cache
+function getExpCoeff!(E::CoefficientExpander, i::Int64, j::Int64, t::Int64)
     if !(0 <= t <= i+j)
         #oob!
         # println("i, j, t oob: $i, $j, $t. Return 0")
@@ -223,17 +222,17 @@ function getExpCoeff(E::CoefficientExpander, i::Int64, j::Int64, t::Int64)
                 # println("i, j, t == 0. Terminus case. Returning and caching $term")
                 return term
             elseif j == 0
-                E0 = getExpCoeff(E, i-1, j, t-1)
-                E1 = getExpCoeff(E, i-1, j, t)
-                E2 = getExpCoeff(E, i-1, j, t+1)
+                E0 = getExpCoeff!(E, i-1, j, t-1)
+                E1 = getExpCoeff!(E, i-1, j, t)
+                E2 = getExpCoeff!(E, i-1, j, t+1)
                 res = E0/(2p) - E1*q*E.Q/E.α + E2*(t + 1)
                 E.cache[i, j, t] = res
                 # println("i, j, t: $i, $j, $t returning and caching $res")
                 return res
             else
-                E0 = getExpCoeff(E, i, j-1, t-1)
-                E1 = getExpCoeff(E, i, j-1, t)
-                E2 = getExpCoeff(E, i, j-1, t+1)
+                E0 = getExpCoeff!(E, i, j-1, t-1)
+                E1 = getExpCoeff!(E, i, j-1, t)
+                E2 = getExpCoeff!(E, i, j-1, t+1)
                 res = E0/(2p) + E1*q*E.Q/E.β + E2*(t + 1)
                 E.cache[i, j, t] = res
                 # println("i, j, t: $i, $j, $t returning and caching $res")
@@ -244,7 +243,7 @@ function getExpCoeff(E::CoefficientExpander, i::Int64, j::Int64, t::Int64)
 end
 
 #Coulomb auxilliary Hermite Integral
-function R(t::Int64, u::Int64, v::Int64, #order of Hermite derivative in x, y, z
+function coulAuxHermIntg(t::Int64, u::Int64, v::Int64, #order of Hermite derivative in x, y, z
             n::Int64, #Boys fn order
             p::Float64, #Sum of Gaussian exponents
             PCx::Float64, PCy::Float64, PCz::Float64, RPN::Float64) #distances
@@ -252,23 +251,23 @@ function R(t::Int64, u::Int64, v::Int64, #order of Hermite derivative in x, y, z
     if t == u == v == 0
         return (-2*p)^n * boys(n, Z)
     elseif t == u == 0
-        q = PCz * R(t, u, v-1, n+1, p, PCx, PCy, PCz, RPN)
+        q = PCz * coulAuxHermIntg(t, u, v-1, n+1, p, PCx, PCy, PCz, RPN)
         if v > 1
-            return q + (v-1) * R(t, u, v-2, n+1, p, PCx, PCy, PCz, RPN)
+            return q + (v-1) * coulAuxHermIntg(t, u, v-2, n+1, p, PCx, PCy, PCz, RPN)
         else
             return q
         end
     elseif t == 0
-        q = PCy * R(t, u-1, v, n+1, p, PCx, PCy, PCz, RPN)
+        q = PCy * coulAuxHermIntg(t, u-1, v, n+1, p, PCx, PCy, PCz, RPN)
         if u > 1
-            return q + (u-1) * R(t, u-2, v, n+1, p, PCx, PCy, PCz, RPN)
+            return q + (u-1) * coulAuxHermIntg(t, u-2, v, n+1, p, PCx, PCy, PCz, RPN)
         else
             return q
         end
     else
-        q = PCx * R(t-1, u, v, n+1, p, PCx, PCy, PCz, RPN)
+        q = PCx * coulAuxHermIntg(t-1, u, v, n+1, p, PCx, PCy, PCz, RPN)
         if t > 1
-            return q + (t-1) * R(t-2, u, v, n+1, p, PCx, PCy, PCz, RPN)
+            return q + (t-1) * coulAuxHermIntg(t-2, u, v, n+1, p, PCx, PCy, PCz, RPN)
         else
             return q
         end
@@ -288,9 +287,9 @@ function primOverlap(la::Int64, ma::Int64, na::Int64,
     maxJ = max(lb, mb, nb)
     minJ = min(lb, mb, nb)
     Ex, Ey, Ez = CoefficientExpander(maxI, maxJ, 0, minI, minJ, expA, expB, oriA .- oriB)
-    Sx = getExpCoeff(Ex, la, lb, 0)
-    Sy = getExpCoeff(Ey, ma, mb, 0)
-    Sz = getExpCoeff(Ez, na, nb, 0)
+    Sx = getExpCoeff!(Ex, la, lb, 0)
+    Sy = getExpCoeff!(Ey, ma, mb, 0)
+    Sz = getExpCoeff!(Ez, na, nb, 0)
     return Sx * Sy * Sz * (π/(expA + expB))^(3//2)
 end
 
@@ -381,10 +380,10 @@ function primNuclearAttraction(
     for t = 0:T
         for u = 0:U
             for v = 0:V
-                tot +=  getExpCoeff(Ex, la, lb, t) *
-                        getExpCoeff(Ey, ma, mb, u) *
-                        getExpCoeff(Ez, na, nb, v) *
-                        R(t, u, v, 0, expp, (Op .- On)..., RPN)
+                tot +=  getExpCoeff!(Ex, la, lb, t) *
+                        getExpCoeff!(Ey, ma, mb, u) *
+                        getExpCoeff!(Ez, na, nb, v) *
+                        coulAuxHermIntg(t, u, v, 0, expp, (Op .- On)..., RPN)
             end
         end
     end
@@ -464,14 +463,14 @@ function primElecRepul(lmnA::Array{Int64,1},
                         for ϕ = 0:PHI
                             #Yes, really.
                             tot +=
-                                getExpCoeff(Ex1, la, lb, t) *
-                                getExpCoeff(Ey1, ma, mb, u) *
-                                getExpCoeff(Ez1, na, nb, v) *
-                                getExpCoeff(Ex2, lc, ld, τ) *
-                                getExpCoeff(Ey2, mc, md, ν) *
-                                getExpCoeff(Ez2, nc, nd, ϕ) *
+                                getExpCoeff!(Ex1, la, lb, t) *
+                                getExpCoeff!(Ey1, ma, mb, u) *
+                                getExpCoeff!(Ez1, na, nb, v) *
+                                getExpCoeff!(Ex2, lc, ld, τ) *
+                                getExpCoeff!(Ey2, mc, md, ν) *
+                                getExpCoeff!(Ez2, nc, nd, ϕ) *
                                 (-1)^(τ+ν+ϕ) *
-                                R(t+τ, u+ν, v+ϕ, 0, α, (oriP .- oriQ)..., RPQ)
+                                coulAuxHermIntg(t+τ, u+ν, v+ϕ, 0, α, (oriP .- oriQ)..., RPQ)
                         end
                     end
                 end
@@ -543,11 +542,6 @@ function getAllShells(atom::Int64)
     return zip(allShell, pqns)
 end
 
-"""
-    generateInitialBasis(geom::Array{AtomGeom, 1}, basis::String)
-
-Given a list of atomic positions and the name of the 
-"""
 function generateInitialBasis(geom::Array{AtomGeom, 1}, basis::String)
     bsfn = Vector{BasisFunction}([])
     for atom in geom
@@ -564,6 +558,24 @@ end
 #=
 Integral Array Generators
 =#
+"""
+    generateOneElectronIntegrals(geom::Array{AtomGeom, 1}, basis::String)
+
+Given `geom`, a molecular geometry as a list of atomic positions (see molecularGeom), 
+and `basis`, the name of the basis set of gaussians to use, 
+generates and returns the one-electron integrals:
+
+∫ ϕ_μ(̄r)ϕ_ν(̄r)dr
+∫ ϕ_μ(̄r) (-1/2 ∇^2) ϕ_ν(̄r)dr
+∫ ϕ_μ(̄r) (-Σ_A^N Z/r_A) ϕ_ν(̄r)dr
+
+Example:
+```filepath = joinpath(@__DIR__, "res", "exampleWater.txt")
+watergeom = readFileToMoleculeGeom(filepath)
+oneElecInt = generateOneElectronIntegrals(watergeom, "sto3g")```
+
+"""
+#TODO allow returning overlap-only for use with DFT?
 function generateOneElectronIntegrals(geom::Array{AtomGeom, 1}, basis::String)
     #Need to create a set of BasisFunctions, centered on geom.centers,
     #using values from basisset for those geom.atoms, with shells (?)

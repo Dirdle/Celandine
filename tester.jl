@@ -1,1 +1,0 @@
-#Removed due to perennial namespace conflicts. Tests now in each file
